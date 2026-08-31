@@ -1,0 +1,185 @@
+# ============================================================
+#  Meter OCR Pipeline - the only file you edit.
+#  Every setting below is read at container start, so a change
+#  takes effect on `docker restart`, with no rebuild.
+# ============================================================
+
+# ------------------------------------------------------------
+#  WATCH - the default 24/7 mode.
+#  Drop images into the mounted folder; each one is read once
+#  and appended to the CSV. Files are never modified or moved.
+# ------------------------------------------------------------
+watch:
+  dir: "images"                 # mounted from the host - drop images here
+  poll_seconds: 5               # how often to look for new files
+  # A large file appears on disk before the copy finishes. Ignore anything
+  # touched more recently than this, so half-written images are not read.
+  min_file_age_seconds: 2
+  annotate: true                # write data/annotated/<name>_annotated.jpg
+  annotated_dir: "data/annotated"
+  state_file: "data/.watch_state.json"
+  source_id: "image"            # camera_id written to the CSV for dropped images
+
+  # This meter cycles pages: an energy page (kWh) and a max-demand page
+  # (kW / MD). Set which one to log; anything else is skipped instead of being
+  # written into the same column, where 02.32 next to 13200 would look like the
+  # meter had reset. null = record every page.
+  page: "kWh"
+  # If the unit label cannot be read at all, read the digits anyway rather than
+  # silently dropping the image. Set false to skip when unsure.
+  read_unknown_page: true
+
+  # THE SINGLE BIGGEST ACCURACY SETTING. [x, y, width, height] in pixels of the
+  # digits only - not the whole meter. Without it OCR also reads the serial
+  # number, the kWh label and the spec text, and concatenates the lot:
+  #   without ROI:  08726461.447198224015052   <- garbage
+  #   with ROI:     08726.4                    <- correct
+  # Three settings are valid:
+  #   null        OCR the whole frame (only sane for an already-tight photo)
+  #   auto        find the lit LCD panel in each image and crop to it. Right
+  #               for handheld photos, where every shot is framed differently.
+  #   [x,y,w,h]   a fixed box. Right for a mounted camera that never moves.
+  roi: auto
+  rotate: 0                     # 0, 90, 180 or 270 if the photos are sideways
+  # Digits after the decimal point. THIS MATTERS MORE THAN IT LOOKS: the
+  # recogniser does not reliably emit the decimal point at all - on a
+  # seven-segment LCD it is a tiny square on the baseline and PP-OCRv5 reads it
+  # as spacing, returning "478295" for a display showing 4782.95 at 0.99
+  # confidence. Setting the meter's known format imposes the point instead of
+  # trusting OCR to see it, which also stops a smudge being read as a point and
+  # shifting the value by 100x. null = take whatever OCR returns, literally.
+  decimals: 2
+
+ocr:
+  # easyocr or paddleocr. Run `compare` on your own images before choosing:
+  #   docker run --rm -v "%cd%/images:/app/images" -v "%cd%/data:/app/data" \
+  #     meter-ocr:both compare --truth truth.csv
+  engine: "paddleocr"
+  languages: ["en"]
+  gpu: true                     # needs the CUDA build; falls back to CPU with a warning
+  # Characters the engine may output. Digits and a decimal point only.
+  # Applies to easyocr; paddleocr has no allowlist and is filtered afterwards.
+  allowlist: "0123456789."
+  min_confidence: 0.35          # discard text read less confidently than this
+  # Resize every crop to roughly this width before OCR, up OR down. An 8000px
+  # phone photo yields a ~4500px panel crop; upscaling that is pure cost, while
+  # a 200px crop off a low-res camera genuinely needs enlarging. Normalising
+  # both to one width means one set of preprocessing numbers fits both.
+  # Set to null to use the fixed `upscale` multiplier instead.
+  target_width: 1600
+  # Keep only text at least this fraction of the tallest thing found on the
+  # panel. The main register is about twice the height of the "kWh"/"kW"/"MD"
+  # labels and the subscript decimals, so 0.55 keeps the reading and drops the
+  # rest. Set to 0 to keep everything (right for a plain printed meter).
+  min_height_frac: 0.55
+  upscale: 3.0                  # fallback multiplier when target_width is null
+
+preprocess:
+  grayscale: true
+  clahe: true                   # local contrast - helps with glare and shadow
+  clahe_clip: 2.0
+  sharpen: true
+  invert: false                 # true if the meter is light digits on dark
+  threshold: false              # adaptive threshold to pure black/white
+  # Divide out uneven lighting before OCR. On a photographed LCD this is the
+  # single most effective step: glare puts a brightness gradient across the
+  # glass, and no one threshold fits the whole panel until it is removed.
+  flatfield: true
+  # Must be wider than a digit stroke and narrower than a digit. 81 suits a
+  # crop normalised to target_width 1600; raise it if strokes survive as
+  # background, lower it if whole digits vanish.
+  flatfield_kernel: 81
+  # Note: still images are additionally read through an inverted and a
+  # thresholded variant of the above, and the readings vote. These flags set
+  # the baseline chain, not the only one.
+
+storage:
+  csv_path: "data/readings.csv"
+  snapshot_dir: "data/snapshots"
+  save_snapshots: true          # keep a JPG of every camera reading for audit
+  snapshot_retention_days: 30   # 0 = keep forever
+
+validation:
+  # A real meter only ever climbs, so a decrease means a misread - but that is
+  # only true of a series from ONE meter. A folder of unrelated test photos
+  # decreases constantly and every row comes back SUSPECT, which hides the
+  # genuine misreads. Keep this false while testing images; set it true once a
+  # single camera is logging one meter on a schedule.
+  expect_increasing: false
+  max_delta_per_hour: 0         # largest believable jump; 0 = no limit
+  # A valid reading from this meter family is 4-7 digits (a 6-digit register
+  # plus the odd 7-digit one). This is the only runtime check that catches the
+  # "OCR read the date line instead of the display" failure: AUG 29 2026/19:55
+  # comes back as 2920261955, which is 10 digits and therefore rejected.
+  digits_min: 4
+  digits_max: 7
+
+# ------------------------------------------------------------
+#  KAFKA - where readings are published
+# ------------------------------------------------------------
+kafka:
+  # Publish automatically from watch/schedule mode as each reading is taken.
+  # Left false until the downstream dashboard is ready - with this false,
+  # nothing reaches the broker no matter how long the watcher runs.
+  # The `publish` command is separately gated behind an explicit --send flag.
+  enabled: false
+  bootstrap_servers: "43.205.29.76:9092"
+  topic: "meter-readings"
+
+  # One id for every message. The photos carry several different serials on
+  # their labels, but this is a single-meter deployment, so the id is fixed
+  # here rather than guessed from the image.
+  meter_id: "meter_5917909"
+  unit: "kWh"
+
+  # crop_image_link is this base plus the crop filename. No object storage is
+  # wired up yet - point this at real storage when it exists and nothing else
+  # in the payload changes.
+  image_base_url: "https://storage.example.com/meters"
+
+  # Timestamps go out with an explicit offset so they are unambiguous
+  # regardless of the container timezone.
+  utc_offset: "+05:30"
+
+  client_id: "meter-ocr"
+  # acks=all: a reading is not "sent" until every in-sync replica has it.
+  # Losing a meter reading silently is worse than a slow producer.
+  acks: "all"
+  retries: 5
+  timeout_sec: 30
+  # Key each message by meter_id so one meter's readings share a partition and
+  # therefore stay in order - consumption is computed from successive readings,
+  # so out-of-order delivery produces nonsense.
+  key_by_meter: true
+
+# ------------------------------------------------------------
+#  SCHEDULE - only used by the `schedule` command (RTSP cameras)
+# ------------------------------------------------------------
+schedule:
+  every_hours: 1
+  at_minute: 0
+  run_on_start: true
+
+# ------------------------------------------------------------
+#  CAPTURE - only used by the RTSP commands (`once`, `schedule`)
+# ------------------------------------------------------------
+capture:
+  rtsp_transport: tcp           # far more reliable than UDP for stills
+  open_timeout_sec: 15
+  warmup_frames: 15             # frames dropped first, to flush stale buffer
+  frames_per_reading: 5         # read this many and let the majority win
+  retries: 3
+  retry_delay_sec: 10
+
+# ------------------------------------------------------------
+#  CAMERAS - leave empty while testing with images.
+#  Add one block per camera when the cameras are wired up.
+# ------------------------------------------------------------
+cameras: []
+  # - id: "meter_01"
+  #   name: "Meter 1"
+  #   enabled: true
+  #   url: "rtsp://user:pass@192.168.1.64:554/Streaming/Channels/101"
+  #   roi: [420, 300, 260, 90]
+  #   rotate: 0
+  #   decimals: 2

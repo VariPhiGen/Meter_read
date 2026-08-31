@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+
+# Runtime output
+data/
+logs/
+
+# Dropped-in test images
+images/
+
+venv/
+.venv/

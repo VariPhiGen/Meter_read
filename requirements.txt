@@ -1,0 +1,19 @@
+# Runtime dependencies common to every image target.
+# torch is NOT here: the CPU and GPU targets pull different wheels from
+# different indexes, so the Dockerfile installs it per target.
+easyocr==1.7.2
+
+# headless, not opencv-python: the container has no display, and the headless
+# wheel drops the libGL/libgtk chain that would otherwise need apt-installing.
+opencv-python-headless==4.10.0.84
+
+# numpy must stay <2. easyocr 1.7.2 and the cu124 torch build are compiled
+# against the 1.x ABI; numpy 2.x makes them fail at import with a binary
+# incompatibility error rather than anything readable.
+numpy==1.24.4
+
+PyYAML==6.0.2
+Pillow==10.4.0
+
+# Kafka producer. Pure python, so it adds no build chain to the image.
+kafka-python==2.0.2

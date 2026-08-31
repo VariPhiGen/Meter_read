@@ -1,0 +1,26 @@
+# The Dockerfile copies only meter_ocr/ and config.yaml, so this file is a
+# second line of defence: it keeps the build *context* small, which matters
+# because every byte of it is uploaded to the Docker daemon on every build.
+
+# Photographs are mounted at run time, never baked in.
+images/
+
+*.jpg
+*.jpeg
+*.png
+
+# Runtime output. Bind-mounted so it outlives the container.
+data/
+logs/
+
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+
+Dockerfile
+.dockerignore
+.git/
+.gitignore
+README.md

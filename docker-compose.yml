@@ -1,7 +1,12 @@
 # 24/7 stack.
 #
+#   cp .env.example .env                  # then put the real camera URL in it
 #   docker compose up -d --build          # OCR scheduler (RTSP -> Kafka)
-#   docker compose --profile dummy up -d  # ...plus the synthetic feed
+#
+# The dummy service publishes INVENTED readings and is behind a profile so it
+# can never start by accident. Use it only to exercise a consumer with no
+# camera present:
+#   docker compose --profile dummy up -d dummy-publisher
 #
 # restart: unless-stopped means Docker restarts these on daemon start and after
 # a reboot - provided Docker itself is set to start on login. It does NOT mean
@@ -18,6 +23,10 @@ services:
     # schedule = capture every enabled camera on the configured interval,
     # forever. run_on_start takes the first reading immediately.
     command: ["schedule"]
+    # Camera credentials live here, never in the committed config.yaml.
+    # Copy .env.example to .env before the first run.
+    env_file:
+      - .env
     environment:
       TZ: "Asia/Kolkata"
     volumes:

@@ -1,10 +1,14 @@
 """Loads config.yaml and exposes it as plain dataclasses."""
 
+import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, List, Optional
 
 import yaml
+
+_ENV_REF = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -61,6 +65,20 @@ class Config:
         return next((c for c in self.cameras if c.id == cam_id), None)
 
 
+def expand_env(value: Any) -> Any:
+    """Replace ${VAR} in a string with the environment's value.
+
+    Exists so a camera URL carrying credentials can live in an untracked .env
+    while config.yaml - which is committed, and to a public repo - holds only
+    the reference. An unset variable is left as the literal ${VAR} rather than
+    silently becoming an empty string, so the failure says what is missing
+    instead of surfacing as an unopenable stream.
+    """
+    if not isinstance(value, str):
+        return value
+    return _ENV_REF.sub(lambda m: os.environ.get(m.group(1), m.group(0)), value)
+
+
 def resolve(p: Any) -> Path:
     """Project-relative paths stay relative to the project, not the cwd."""
     path = Path(p)
@@ -81,7 +99,7 @@ def load(path: Optional[Path] = None) -> Config:
             Camera(
                 id=str(entry["id"]),
                 name=str(entry.get("name", entry["id"])),
-                url=str(entry["url"]),
+                url=expand_env(str(entry["url"])),
                 enabled=bool(entry.get("enabled", True)),
                 roi=entry.get("roi"),
                 rotate=int(entry.get("rotate", 0) or 0),

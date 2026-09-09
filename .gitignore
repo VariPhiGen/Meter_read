@@ -1,12 +1,19 @@
 __pycache__/
 *.pyc
 
-# Runtime output
-data/
-logs/
+# Runtime output. The directories themselves are tracked via .gitkeep so a
+# fresh clone has the mount points the compose bind-mounts expect.
+data/*
+!data/.gitkeep
+logs/*
+!logs/.gitkeep
 
 # Dropped-in test images
-images/
+images/*
+!images/.gitkeep
 
 venv/
 .venv/
+
+# Local secrets - camera credentials, broker overrides.
+.env

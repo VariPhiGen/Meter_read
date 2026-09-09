@@ -12,6 +12,67 @@ itself, and one Dockerfile builds every variant.
 
 ---
 
+## Quick start on a new machine
+
+The whole stack is `docker compose`. On the machine that is on the **same LAN
+as the camera** — the camera is not reachable from the internet, so this must
+be that machine, not a remote server:
+
+```powershell
+git clone https://github.com/VariPhiGen/Meter_read.git
+cd Meter_read
+
+copy .env.example .env       # then edit .env and put the real camera URL in it
+notepad .env
+
+docker compose up -d --build
+docker compose logs -f meter-ocr
+```
+
+That is the whole setup. The build takes 5-10 minutes the first time (it bakes
+the PP-OCRv5 weights in so the container needs no internet at run time), and
+seconds on every rebuild afterwards.
+
+**`.env` is the only file you must edit.** It is gitignored, because the camera
+URL carries credentials and this repository is public:
+
+```
+METER_01_RTSP_URL=rtsp://user:pass@192.168.0.111:554/cam/realmonitor?channel=1&subtype=0&unicast=true&proto=Onvif
+```
+
+`config.yaml` refers to it as `${METER_01_RTSP_URL}` and the value is
+substituted at load time. An unset variable is left as the literal `${...}`
+rather than becoming an empty string, so a missing `.env` fails with a message
+naming the variable instead of an unopenable stream.
+
+Everything else — how often to read, the ROI, the decimal places, the Kafka
+broker and topic — is in `config.yaml`. It is bind-mounted, not baked into the
+image, so a change takes effect on `docker compose restart meter-ocr` with no
+rebuild.
+
+### Checking it before the camera is wired up
+
+```powershell
+docker compose run --rm meter-ocr selftest        # synthetic panel, no camera
+docker compose run --rm meter-ocr cameras         # can we reach the camera, and what does OCR read?
+docker compose run --rm meter-ocr publish --limit 4   # OCR the sample images, print payloads, send nothing
+```
+
+`cameras` is the one to run first on the new machine: it reports reachability
+per camera and what OCR reads from a live frame, without writing or publishing
+anything.
+
+### Common first-run problems
+
+| Symptom | Cause |
+|---|---|
+| `Could not open stream` / `403 Forbidden` | Wrong URL, wrong credentials, or an ingest-only endpoint. Confirm the camera's RTSP path in its own web UI. |
+| `UNREACHABLE` | The machine is not on the camera's subnet. Check `ipconfig` against the camera's IP. |
+| `${METER_01_RTSP_URL}` appears in the log | No `.env`, or the variable is not in it. |
+| Readings are garbage | `roi: auto` picked the wrong bright region. Set an explicit `[x, y, w, h]` for the camera in `config.yaml`. |
+
+---
+
 ## 1. Install Docker (not yet installed on this machine)
 
 Docker Desktop needs the WSL2 backend. In an **Administrator** PowerShell:

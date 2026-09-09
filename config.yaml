@@ -184,7 +184,10 @@ cameras:
   - id: "meter_01"
     name: "Meter 1"
     enabled: true
-    url: "rtsp://9627b0bf2a7b.entrypoint.cloud.wowza.com:1935/app-p5260J38/66abe4b9_stream1"
+    # ${VAR} is read from the environment at load time. The real URL carries
+    # camera credentials and this file is committed to a public repo, so the
+    # value lives in .env (untracked) and only the reference is here.
+    url: "${METER_01_RTSP_URL}"
     # auto until the panel's fixed position in this stream is known. A mounted
     # camera that never moves is better served by explicit [x, y, w, h] - it is
     # both faster and not subject to the detector picking the wrong bright box.

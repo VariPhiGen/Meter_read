@@ -158,7 +158,12 @@ kafka:
 schedule:
   every_hours: 1
   at_minute: 0
-  run_on_start: true
+  # false so readings land only on the hour. true adds one extra reading the
+  # moment the container starts, which lands off the grid and shows up
+  # downstream as an out-of-cadence sample. To check the camera right after
+  # starting, use `docker compose run --rm meter-ocr cameras` - it reads a
+  # live frame and publishes nothing.
+  run_on_start: false
   # Continuous mode. When set, this overrides the every_hours/at_minute grid
   # and simply takes a reading every N seconds - which is what feeding a live
   # consumer needs, and what the hourly grid cannot express. Comment it out to

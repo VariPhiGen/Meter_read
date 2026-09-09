@@ -1,0 +1,9 @@
+# Kafka-only image: no OCR, so it does not depend on the paddle build.
+FROM python:3.11-slim
+ENV PYTHONUNBUFFERED=1 PYTHONPATH=/app
+RUN pip install --no-cache-dir kafka-python==2.0.2 PyYAML==6.0.2
+WORKDIR /app
+COPY meter_ocr/ ./meter_ocr/
+COPY config.yaml ./
+COPY dummy_loop.py /dummy_loop.py
+CMD ["python", "/dummy_loop.py"]

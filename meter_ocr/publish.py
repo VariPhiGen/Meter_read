@@ -73,9 +73,13 @@ def image_link(cfg: Config, row: dict, source: Path) -> str:
     return f"{base}/{name}" if base else name
 
 
-def build(cfg: Config, row: dict, source: Path) -> dict:
-    """Turn one pipeline row into one Kafka message."""
-    tz = _tz(str(cfg.kafka.get("utc_offset", "+05:30")))
+def _message(cfg: Config, row: dict, captured: str, link: str) -> dict:
+    """The wire contract itself, shared by the image and RTSP paths.
+
+    Both sources produce the same pipeline row shape; they differ only in
+    where the capture time and the image name come from, so those two are
+    passed in rather than re-derived here.
+    """
     unit = str(cfg.kafka.get("unit", "kWh"))
 
     value = None
@@ -98,12 +102,35 @@ def build(cfg: Config, row: dict, source: Path) -> dict:
 
     return {
         "meter_id": str(cfg.kafka.get("meter_id", "meter_unknown")),
-        "captured_at": captured_at(source, tz),
-        "crop_image_link": image_link(cfg, row, source),
+        "captured_at": captured,
+        "crop_image_link": link,
         "reading": {"value": value, "unit": unit},
         "ocr": {"text": text, "confidence": confidence},
         "status": status,
     }
+
+
+def build(cfg: Config, row: dict, source: Path) -> dict:
+    """Turn one row read from an image file into one Kafka message."""
+    tz = _tz(str(cfg.kafka.get("utc_offset", "+05:30")))
+    return _message(cfg, row, captured_at(source, tz), image_link(cfg, row, source))
+
+
+def build_live(cfg: Config, row: dict) -> dict:
+    """Turn one row read from an RTSP camera into one Kafka message.
+
+    There is no file to take a capture time from - the frame was grabbed just
+    now - so the wall clock is the honest answer, and the snapshot the
+    pipeline wrote supplies the image name.
+    """
+    tz = _tz(str(cfg.kafka.get("utc_offset", "+05:30")))
+    captured = datetime.now(tz).isoformat(timespec="seconds")
+
+    base = str(cfg.kafka.get("image_base_url", "")).rstrip("/")
+    name = Path(row.get("snapshot") or "").name
+    link = f"{base}/{name}" if base and name else name
+
+    return _message(cfg, row, captured, link)
 
 
 def make_producer(cfg: Config):

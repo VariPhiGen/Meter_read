@@ -3,7 +3,7 @@
 import logging
 from typing import List, Optional
 
-from . import capture, ocr, preprocess, storage
+from . import autocrop, capture, ocr, preprocess, storage
 from .config import Camera, Config
 
 log = logging.getLogger(__name__)
@@ -47,9 +47,12 @@ def read_camera(cfg: Config, cam: Camera, reader) -> dict:
         row["note"] = f"capture failed: {exc}"
         return row
 
+    # "auto" is resolved per frame, not once for the camera: crop_roi only
+    # understands [x, y, w, h], and the string "auto" is four characters long,
+    # so it slips past that length check and dies on int("a").
     prepared = [
         preprocess.prepare(
-            f, cam.roi, cfg.preprocess,
+            f, autocrop.resolve(f, cam.roi, cam.id), cfg.preprocess,
             float(cfg.ocr.get("upscale", 3.0)), cfg.ocr.get("target_width"),
         )
         for f in frames
@@ -129,4 +132,25 @@ def run_cycle(cfg: Config, only: Optional[List[str]] = None) -> List[dict]:
 
     ok = sum(1 for r in rows if r["status"] == "OK")
     log.info("Cycle complete: %d/%d OK -> %s", ok, len(rows), cfg.csv_path)
+
+    _publish(cfg, rows)
     return rows
+
+
+def _publish(cfg: Config, rows: List[dict]) -> None:
+    """Send this cycle's readings to Kafka, if kafka.enabled says to.
+
+    The CSV is the system of record, so a broker that is down must not lose a
+    reading or kill a scheduler meant to run for months - the exception is
+    logged and the cycle still counts as done.
+    """
+    if not bool(cfg.kafka.get("enabled", False)):
+        return
+
+    from . import publish
+
+    try:
+        publish.send(cfg, [publish.build_live(cfg, r) for r in rows])
+    except Exception:  # noqa: BLE001 - broker trouble is not data loss
+        log.exception("Kafka publish failed - the readings are still in %s",
+                      cfg.csv_path)

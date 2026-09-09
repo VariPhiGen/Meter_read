@@ -23,15 +23,30 @@ _ROTATIONS = {
 }
 
 
-def _set_ffmpeg_options(transport: str, open_timeout_sec: int) -> None:
-    """FFMPEG options must be set via env var before VideoCapture is created."""
+def _set_ffmpeg_options(transport: str, open_timeout_sec: int, url: str = "") -> None:
+    """FFMPEG options must be set via env var before VideoCapture is created.
+
+    The option set is per-protocol, and passing the wrong one is not ignored -
+    FFmpeg rejects the open outright. `rtsp_transport` and `stimeout` belong to
+    the RTSP demuxer; handing them to an http/HLS URL fails before a single
+    segment is fetched. HLS also has to download a playlist AND a media segment
+    before it can probe the codec, so it needs a probe budget that RTSP does not.
+    """
     timeout_us = int(open_timeout_sec * 1_000_000)
-    os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = (
-        f"rtsp_transport;{transport}"
-        f"|stimeout;{timeout_us}"
-        f"|max_delay;500000"
-        f"|buffer_size;1024000"
-    )
+    if url.lower().startswith("rtsp"):
+        opts = (
+            f"rtsp_transport;{transport}"
+            f"|stimeout;{timeout_us}"
+            f"|max_delay;500000"
+            f"|buffer_size;1024000"
+        )
+    else:
+        opts = (
+            f"rw_timeout;{timeout_us}"
+            f"|analyzeduration;10000000"
+            f"|probesize;10000000"
+        )
+    os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = opts
 
 
 def sharpness(img: np.ndarray) -> float:
@@ -49,7 +64,7 @@ def grab_frames(
     rotate: int = 0,
 ) -> List[np.ndarray]:
     """Open the stream, flush stale frames, and return `count` fresh frames."""
-    _set_ffmpeg_options(transport, open_timeout_sec)
+    _set_ffmpeg_options(transport, open_timeout_sec, url)
 
     cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
     try:

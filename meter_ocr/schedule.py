@@ -30,6 +30,13 @@ def next_run(now: datetime, every_hours: int, at_minute: int) -> datetime:
 
 
 def run(cfg: Config, initial_run: bool = True) -> int:
+    # A continuous feed to a consumer wants a plain interval, which the
+    # wall-clock grid below cannot express: it aligns to :MM of the hour and
+    # every_hours is floored at 1. every_seconds opts out of the grid.
+    every_seconds = cfg.schedule.get("every_seconds")
+    if every_seconds:
+        return _run_interval(cfg, int(every_seconds), initial_run)
+
     every = int(cfg.schedule.get("every_hours", 1) or 1)
     minute = int(cfg.schedule.get("at_minute", 0) or 0)
     on_start = bool(cfg.schedule.get("run_on_start", True)) and initial_run
@@ -62,3 +69,31 @@ def _safe_cycle(cfg: Config) -> None:
         pipeline.run_cycle(cfg)
     except Exception:  # noqa: BLE001
         log.exception("Cycle failed - continuing to next scheduled run")
+
+
+def _run_interval(cfg: Config, seconds: int, initial_run: bool) -> int:
+    """Read every `seconds`, forever. Used instead of the hourly grid.
+
+    The sleep is measured from the end of a cycle rather than the start, so a
+    capture that takes longer than the interval slows the loop down instead of
+    queueing cycles back-to-back with no gap.
+    """
+    period = max(5, int(seconds))
+    log.info("Scheduler started - every %ds (continuous)", period)
+    log.info("Cameras: %s", ", ".join(c.id for c in cfg.enabled_cameras()) or "none")
+
+    try:
+        if bool(cfg.schedule.get("run_on_start", True)) and initial_run:
+            _safe_cycle(cfg)
+
+        while True:
+            deadline = time.monotonic() + period
+            while True:
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    break
+                time.sleep(min(5, left))  # short slices keep Ctrl+C responsive
+            _safe_cycle(cfg)
+    except KeyboardInterrupt:
+        log.info("Scheduler stopped")
+        return 0

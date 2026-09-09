@@ -1,0 +1,49 @@
+# PaddleOCR 3.x / PP-OCRv5. No easyocr, no torch - engines.py selects the v5
+# code path off paddleocr.__version__, so installing 3.x is all it takes.
+FROM python:3.10-slim
+
+ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
+
+# paddleocr 3.x pulls in paddlex, which imports the non-headless opencv, so
+# libGL and the X11 stubs are required even though we install opencv-headless.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libgomp1 ca-certificates libgl1 libglib2.0-0 libsm6 libxext6 libxrender1 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# paddleocr and paddlex must be a matched pair, and paddleocr must be recent
+# enough to pin one itself: 3.1.0 left paddlex unconstrained, so pip took 3.7.2,
+# whose PaddlePredictorOption.__init__ had stopped accepting the positional
+# argument 3.1.0 still passed. 3.7.0 requires paddlex[ocr-core]>=3.7.0,<3.8.0
+# and so resolves consistently on its own.
+#
+# That [ocr-core] extra also keeps the image small: bare paddlex pulls
+# langchain, openai and modelscope for the chat/IE pipelines that OCR never
+# touches - and paddlex 3.1.0 then failed at import anyway, on a
+# langchain.docstore that current langchain no longer ships.
+RUN pip install --no-cache-dir \
+        paddlepaddle==3.2.2 \
+        paddleocr==3.7.0 \
+        opencv-python-headless==4.10.0.84 \
+        "numpy<2" \
+        PyYAML==6.0.2 \
+        Pillow==10.4.0 \
+        kafka-python==2.0.2
+
+# Bake the PP-OCRv5 weights in so a run needs no network and no first-call
+# download stall. Same reasoning as the project's own Dockerfile.
+RUN python -c "\
+from paddleocr import PaddleOCR; \
+PaddleOCR(ocr_version='PP-OCRv5', lang='en', device='cpu', \
+          use_doc_orientation_classify=False, use_doc_unwarping=False, \
+          use_textline_orientation=False)"
+
+# Code last: editing a .py rebuilds only this layer, leaving the pip install
+# and the model download above cached.
+COPY meter_ocr/ ./meter_ocr/
+COPY config.yaml truth.csv ./
+RUN mkdir -p images data/snapshots data/annotated logs
+
+ENTRYPOINT ["python", "-m", "meter_ocr"]
+CMD ["schedule"]

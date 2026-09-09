@@ -1,0 +1,55 @@
+# 24/7 stack.
+#
+#   docker compose up -d --build          # OCR scheduler (RTSP -> Kafka)
+#   docker compose --profile dummy up -d  # ...plus the synthetic feed
+#
+# restart: unless-stopped means Docker restarts these on daemon start and after
+# a reboot - provided Docker itself is set to start on login. It does NOT mean
+# they run while the machine is powered off; nothing local can.
+
+services:
+  meter-ocr:
+    build:
+      context: .
+      dockerfile: Dockerfile.v5
+    image: meter-ocr:v5
+    container_name: meter-ocr
+    restart: unless-stopped
+    # schedule = capture every enabled camera on the configured interval,
+    # forever. run_on_start takes the first reading immediately.
+    command: ["schedule"]
+    environment:
+      TZ: "Asia/Kolkata"
+    volumes:
+      # Mounted, not baked: the config comments promise a change takes effect
+      # on `docker restart` with no rebuild, and that only holds if the file
+      # comes from the host.
+      - ./config.yaml:/app/config.yaml:ro
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./images:/app/images
+    # OCR of a frame can outlast the default 10s SIGKILL grace period.
+    stop_grace_period: 30s
+    logging:
+      driver: "json-file"
+      options: { max-size: "10m", max-file: "5" }
+
+  # Synthetic hourly feed. Opt-in: it puts invented readings on the same topic
+  # as the real ones, so it must never start by accident alongside the real
+  # pipeline. Start it only with --profile dummy.
+  dummy-publisher:
+    build:
+      context: .
+      dockerfile: Dockerfile.dummy
+    image: meter-dummy:1
+    container_name: meter-dummy-publisher
+    restart: unless-stopped
+    profiles: ["dummy"]
+    environment:
+      TZ: "Asia/Kolkata"
+      PERIOD_SECONDS: "3600"
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+    logging:
+      driver: "json-file"
+      options: { max-size: "10m", max-file: "5" }

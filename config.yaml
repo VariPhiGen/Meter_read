@@ -122,7 +122,7 @@ kafka:
   # Left false until the downstream dashboard is ready - with this false,
   # nothing reaches the broker no matter how long the watcher runs.
   # The `publish` command is separately gated behind an explicit --send flag.
-  enabled: false
+  enabled: true
   bootstrap_servers: "43.205.29.76:9092"
   topic: "meter-readings"
 
@@ -159,6 +159,11 @@ schedule:
   every_hours: 1
   at_minute: 0
   run_on_start: true
+  # Continuous mode. When set, this overrides the every_hours/at_minute grid
+  # and simply takes a reading every N seconds - which is what feeding a live
+  # consumer needs, and what the hourly grid cannot express. Comment it out to
+  # go back to the hourly schedule.
+  # every_seconds: 60
 
 # ------------------------------------------------------------
 #  CAPTURE - only used by the RTSP commands (`once`, `schedule`)
@@ -175,11 +180,14 @@ capture:
 #  CAMERAS - leave empty while testing with images.
 #  Add one block per camera when the cameras are wired up.
 # ------------------------------------------------------------
-cameras: []
-  # - id: "meter_01"
-  #   name: "Meter 1"
-  #   enabled: true
-  #   url: "rtsp://user:pass@192.168.1.64:554/Streaming/Channels/101"
-  #   roi: [420, 300, 260, 90]
-  #   rotate: 0
-  #   decimals: 2
+cameras:
+  - id: "meter_01"
+    name: "Meter 1"
+    enabled: true
+    url: "rtsp://9627b0bf2a7b.entrypoint.cloud.wowza.com:1935/app-p5260J38/66abe4b9_stream1"
+    # auto until the panel's fixed position in this stream is known. A mounted
+    # camera that never moves is better served by explicit [x, y, w, h] - it is
+    # both faster and not subject to the detector picking the wrong bright box.
+    roi: auto
+    rotate: 0
+    decimals: 2
